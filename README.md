@@ -7,7 +7,8 @@ A lightweight, single-binary music server that implements the [Subsonic API](htt
 ## Features
 
 - Scans and serves your local music library over the Subsonic API
-- Reads metadata from audio file tags (artist, album, title, track, disc, year)
+- Reads metadata from audio file tags (artist, album artist, album, title, track, disc, year)
+- Groups albums by **album artist**, so featured tracks ("X & Y") stay in X's album: the album artist tag, else "Various Artists" for compilations (flag or a `Compilations` folder), else the top-level artist folder
 - Duration probing via ffprobe (concurrent, 8 workers)
 - Transcoding via ffmpeg (MP3, Opus, AAC, FLAC) when clients request a lower bitrate
 - Supports MP3, FLAC, M4A, AAC, OGG, Opus, WAV, and WMA
