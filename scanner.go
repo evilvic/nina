@@ -71,17 +71,20 @@ func scanLibrary(musicDir string, lib *Library) error {
 
 		relPath, _ := filepath.Rel(musicDir, path)
 
-		artistName, albumName, title, track, disc, year := readTags(path, relPath)
+		artistName, albumArtist, albumName, title, track, disc, year := readTags(path, relPath)
 
 		suffix := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
 
-		artistID := makeID("ar", strings.ToLower(artistName))
-		albumID := makeID("al", strings.ToLower(artistName+"/"+albumName))
+		// Artists and albums are keyed by the album artist, so a track by
+		// "X & Y" stays inside X's album instead of spawning an album of its own.
+		// The song keeps its own track artist for display.
+		artistID := makeID("ar", strings.ToLower(albumArtist))
+		albumID := makeID("al", strings.ToLower(albumArtist+"/"+albumName))
 		songID := makeID("sg", relPath)
 
 		artist, ok := lib.Artists[artistID]
 		if !ok {
-			artist = &Artist{ID: artistID, Name: artistName}
+			artist = &Artist{ID: artistID, Name: albumArtist}
 			lib.Artists[artistID] = artist
 		}
 
@@ -91,7 +94,7 @@ func scanLibrary(musicDir string, lib *Library) error {
 				ID:         albumID,
 				Name:       albumName,
 				ArtistID:   artistID,
-				ArtistName: artistName,
+				ArtistName: albumArtist,
 				Year:       year,
 			}
 			lib.Albums[albumID] = album
@@ -197,8 +200,51 @@ func probeDuration(path string) int {
 	return int(math.Round(dur))
 }
 
-func readTags(path, relPath string) (artist, album, title string, track, disc, year int) {
+const variousArtists = "Various Artists"
+
+// resolveAlbumArtist picks the artist an album is grouped under: the album
+// artist tag when present; "Various Artists" for compilations (flag, or the
+// "Compilations" folder iTunes/Apple Music uses); otherwise the top-level
+// folder, which in an Artist/Album/track layout is the album artist; and
+// only as a last resort the track artist.
+func resolveAlbumArtist(tagged, trackArtist, folder string, compilation bool) string {
+	if s := strings.TrimSpace(tagged); s != "" {
+		return s
+	}
+	if compilation || strings.EqualFold(folder, "Compilations") {
+		return variousArtists
+	}
+	if folder != "" {
+		return folder
+	}
+	return trackArtist
+}
+
+// isCompilation reads the compilation flag from raw tags: MP4 "cpil" (parsed
+// as "compilation"), ID3 "TCMP", Vorbis "COMPILATION".
+func isCompilation(raw map[string]interface{}) bool {
+	for _, k := range []string{"compilation", "TCMP", "COMPILATION"} {
+		switch v := raw[k].(type) {
+		case bool:
+			if v {
+				return true
+			}
+		case int:
+			if v != 0 {
+				return true
+			}
+		case string:
+			if s := strings.TrimSpace(strings.ToLower(v)); s == "1" || s == "true" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func readTags(path, relPath string) (artist, albumArtist, album, title string, track, disc, year int) {
 	parts := strings.Split(relPath, string(filepath.Separator))
+	folder := ""
 	switch len(parts) {
 	case 1:
 		title = strings.TrimSuffix(parts[0], filepath.Ext(parts[0]))
@@ -206,13 +252,20 @@ func readTags(path, relPath string) (artist, album, title string, track, disc, y
 		album = "Unknown Album"
 	case 2:
 		artist = parts[0]
+		folder = parts[0]
 		title = strings.TrimSuffix(parts[1], filepath.Ext(parts[1]))
 		album = "Unknown Album"
 	default:
 		artist = parts[0]
+		folder = parts[0]
 		album = parts[1]
 		title = strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
 	}
+
+	tagged, compilation := "", false
+	defer func() {
+		albumArtist = resolveAlbumArtist(tagged, artist, folder, compilation)
+	}()
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -225,6 +278,8 @@ func readTags(path, relPath string) (artist, album, title string, track, disc, y
 		return
 	}
 
+	tagged = m.AlbumArtist()
+	compilation = isCompilation(m.Raw())
 	if m.Artist() != "" {
 		artist = m.Artist()
 	}
